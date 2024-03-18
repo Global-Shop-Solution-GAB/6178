@@ -1,0 +1,237 @@
+﻿Program.Sub.Preflight.Start
+Program.External.Include.Library("GCG_6178_ErrorHandling.lib")
+V.Global.bUseRev.Declare
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'BixRB
+'16 Nov 2020
+'Walnut Creek Planning Ltd.
+'GCG_6178_PO_Receipts.g2u
+'GS Mobile PO Receipts mod
+V.Local.sPO.Declare
+V.Local.sRet.Declare
+V.Local.sSQL.Declare
+V.Local.fCPF.Declare
+F.Intrinsic.Control.Try
+
+F.Global.General.ReadOption("070008",0,False,"0000",V.Global.bUseRev)
+
+F.Intrinsic.Control.SelectCase(V.Caller.Hook)
+	F.Intrinsic.Control.Case(16850)
+		'PO Master Populate Hook
+		F.Intrinsic.Control.If(V.Caller.Switches,=,"O")
+			V.Passed.000072.Set("Update$")
+		F.Intrinsic.Control.Else
+			V.Passed.000072.Set("")
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Case(16910)
+		'PO Master Script 3 Hook
+		F.Intrinsic.Control.If(V.Passed.000008,!=,"",and,V.Caller.Switches,=,"O")
+			F.Intrinsic.String.LPad(V.Passed.000008,"0",7,V.Local.sPO)
+			
+			F.Intrinsic.Control.CallSub(GetPOHeaderUser2,"PONum",V.Local.sPO)
+			
+			'Ask user to update cost
+			F.Intrinsic.UI.Inputbox("Please enter a new Freight Value below:","EDITING USER FIELD 2",V.Args.User2,V.Local.sRet)
+			V.Local.sRet.Set(V.Local.sRet.Trim)
+			F.Intrinsic.Control.If(V.Local.sRet.IsNumeric,=,True,and,V.Local.sRet,!=,V.Args.User2)
+				'First, update PO_HEADER
+				F.Intrinsic.String.Build("update PO_HEADER set USER_2 = '{0}' where PURCHASE_ORDER = '{1}' and RECORD_NO = '  A ';",V.Local.sRet,V.Local.sPO,V.Local.sSQL)
+				F.ODBC.Connection!con.OpenCompanyConnection
+				F.ODBC.Connection!con.Execute(V.Local.sSQL)
+				F.ODBC.Connection!con.Close
+				
+				'New value entered, calculate it
+				F.Intrinsic.Control.CallSub(GetPOReceiptHist,"PONum",V.Local.sPO)
+				F.Intrinsic.Math.Div(V.Local.sRet.Float,V.Args.QtyRecv,V.Local.fCPF)
+				F.Intrinsic.Math.Round(V.Local.fCPF,6,V.Local.fCPF)
+				'Use Po Receipt DT to process Standalone Issue Receipts
+				F.Intrinsic.Control.CallSub(ProcessIssueReceipts,"CPF",V.Local.fCPF)
+				
+				F.Data.DataTable.Close("dtPOReceiptHist")
+			F.Intrinsic.Control.ElseIf(V.Local.sRet.IsNumeric,=,False,and,V.Local.sRet.IsNotCancel,=,True)
+				F.Intrinsic.UI.Msgbox("Value entered must be numeric.","Cancelling Update")
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Case(31951)
+		'GS Mobile P10 Post Transaction Hook
+		F.Intrinsic.Control.CallSub(GetWirelessLineData,"TransID",V.Passed.DATA-TRANSID)
+		'Get PO Header user 2
+		F.Intrinsic.Control.CallSub(GetPOHeaderUser2,"PONum",V.DataTable.dtWirelessLineData(0).PO_NUM!FieldVal)
+		F.Intrinsic.Control.If(V.Args.User2.IsNumeric,=,False,or,V.DataTable.dtWirelessLineData(0).CLOSE_PO!FieldVal,!=,"Y")
+			'User 2 is not numeric so exit
+			F.Intrinsic.Control.End
+		F.Intrinsic.Control.EndIf
+		'Get total quantity received on PO
+		F.Intrinsic.Control.CallSub(GetPOReceiptHist,"PONum",V.DataTable.dtWirelessLineData(0).PO_NUM!FieldVal)
+		F.Intrinsic.Math.Div(V.Args.User2.Float,V.Args.QtyRecv,V.Local.fCPF)
+		F.Intrinsic.Math.Round(V.Local.fCPF,6,V.Local.fCPF)
+		'Use Po Receipt DT to process Standalone Issue Receipts
+		F.Intrinsic.Control.CallSub(ProcessIssueReceipts,"CPF",V.Local.fCPF)
+		
+		F.Data.DataTable.Close("dtWirelessLineData")
+		F.Data.DataTable.Close("dtPOReceiptHist")
+F.Intrinsic.Control.EndSelect
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Caller.Hook,!=,31951)
+		F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.GetWirelessLineData.Start
+V.Local.sSQL.Declare
+V.Local.sData.Declare
+V.Local.sSeqData.Declare
+V.Local.sColumnHeaders.Declare
+V.Local.sDataTypes.Declare
+F.Intrinsic.Control.Try
+
+F.Intrinsic.String.Build("{0}*!*{1}*!*{2}*!*{3}*!*{4}*!*{5}*!*{6}*!*{7}*!*{8}*!*{9}*!*{10}*!*{11}*!*{12}*!*{13}*!*{14}*!*{15}*!*{16}*!*{17}*!*{18}*!*{19}*!*{20}*!*{21}*!*{22}*!*{23}*!*{24}*!*{25}*!*{26}*!*{27}*!*{28}*!*{29}*!*{30}*!*{31}*!*{32}*!*{33}","PO_NUM","PO_LINE","BIN","LOT","HEAT","SERIAL","FIELD_7","PURCH_QTY","RECEIVER_NO","FIELD_10","CLOSE_PO_LINE","JOB","SUFFIX","SEQ","FIELD_15","FIELD_16","FIELD_17","FIELD_18","FIELD_19","FIELD_20","CLOSE_PO","INV_QTY","INV_UM","PURCH_UM","FIELD_25","USER_1","USER_2","USER_3","USER_4","USER_5","USER_6","USER_7","USER_8","USER_9",V.Local.sColumnHeaders)
+F.Intrinsic.String.Build("{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{1}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{1}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}*!*{0}","String","Float",V.Local.sDataTypes)
+
+F.Intrinsic.String.Build("select rtrim(FIELD_1), rtrim(FIELD_2), rtrim(FIELD_3), rtrim(FIELD_4), rtrim(FIELD_5), rtrim(FIELD_6), rtrim(FIELD_7), rtrim(FIELD_8), rtrim(FIELD_9), rtrim(FIELD_10), rtrim(FIELD_11), rtrim(FIELD_12), rtrim(FIELD_13), rtrim(FIELD_14), rtrim(FIELD_15), rtrim(FIELD_16), rtrim(FIELD_17), rtrim(FIELD_18), rtrim(FIELD_19), rtrim(FIELD_20), rtrim(FIELD_21), rtrim(FIELD_22), rtrim(FIELD_23), rtrim(FIELD_24), rtrim(FIELD_25) from V_WIRELESS_LINE where TRANS_ID = '{0}' and TRANS_TYPE = 'P10' order by SEQ asc;",V.Args.TransID,V.Local.sSQL)
+F.ODBC.Connection!con.OpenCompanyConnection
+F.ODBC.Connection!con.ExecuteAndReturn(V.Local.sSQL,V.Local.sData)
+F.ODBC.Connection!con.Close
+F.Intrinsic.Control.If(V.Ambient.ExecuteAndReturnEOF)
+	'No transaction found
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndIf
+F.Intrinsic.String.Split(V.Local.sData,"#$#",V.Local.sData)
+F.Intrinsic.String.Split(V.Local.sData(1),"*!*",V.Local.sSeqData)
+V.Local.sSeqData.RedimPreserve(0,8)
+F.Intrinsic.String.Join(V.Local.sSeqData,"*!*",V.Local.sData(1))
+V.Local.sSeqData.Redim(0,0)
+F.Intrinsic.String.Join(V.Local.sData,"*!*",V.Local.sData)
+V.Local.sData.RedimPreserve(0,0)
+
+F.Data.DataTable.CreateFromString("dtWirelessLineData",V.Local.sData,V.Local.sColumnHeaders,V.Local.sDataTypes,"*!*","#$#",True)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.GetWirelessLineData.End
+
+Program.Sub.GetPOHeaderUser2.Start
+V.Local.sSQL.Declare
+F.Intrinsic.Control.Try
+
+F.Intrinsic.String.Build("select rtrim(USER_2) from V_PO_HEADER where PURCHASE_ORDER = '{0}';",V.Args.PONum,V.Local.sSQL)
+F.ODBC.Connection!con.OpenCompanyConnection
+F.ODBC.Connection!con.ExecuteAndReturn(V.Local.sSQL,V.Local.sSQL)
+F.Intrinsic.Control.If(V.Ambient.ExecuteAndReturnEOF)
+	'Check history table
+	F.Intrinsic.String.Build("select rtrim(USER_2) from V_PO_H_HEADER where PURCHASE_ORDER = '{0}';",V.Args.PONum,V.Local.sSQL)
+	F.ODBC.Connection!con.ExecuteAndReturn(V.Local.sSQL,V.Local.sSQL)
+F.Intrinsic.Control.EndIf
+F.ODBC.Connection!con.Close
+
+F.Intrinsic.Variable.AddRV("User2",V.Local.sSQL)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Caller.Hook,!=,31951)
+		F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.GetPOHeaderUser2.End
+
+Program.Sub.GetPOReceiptHist.Start
+V.Local.sSQL.Declare
+V.Local.fQtyRecv.Declare
+F.Intrinsic.Control.Try
+
+F.Intrinsic.String.Build("select A.PURCHASE_ORDER, A.PO_LINE, A.RECEIVER_NO, A.PART, A.LOCATION, isnull(C.LOT, '') as LOT, isnull(C.BIN, '') as BIN, isnull(C.HEAT, '') as HEAT, isnull(C.SERIAL_NUMBER, '') as SERIAL, A.QTY_RECEIVED, A.COST as UNIT_COST, isnull(B.LOGGED, convert(0, SQL_Bit)) as LOGGED, isnull(B.CPF, convert(0, SQL_Double)) as CPF, A.GL_ACCOUNT from V_PO_HISTORY A left join GCG_6178_LOG B on A.PURCHASE_ORDER = B.PURCHASE_ORDER and A.PO_LINE = B.PO_LINE and A.RECEIVER_NO = B.RECEIVER_NO left join V_ITEM_HISTORY C on A.PURCHASE_ORDER = C.PURCHASE_ORDER and A.PO_LINE = C.PO_LINE and A.RECEIVER_NO = C.RECEIVER where A.PURCHASE_ORDER = '{0}' and A.RECEIVER_NO <> '' and A.QTY_RECEIVED <> 0;",V.Args.PONum,V.Local.sSQL)
+F.ODBC.Connection!con.OpenCompanyConnection
+F.Data.DataTable.CreateFromSQL("dtPOReceiptHist","con",V.Local.sSQL,True)
+F.ODBC.Connection!con.Close
+
+F.Data.DataTable.Compute("dtPOReceiptHist","sum(QTY_RECEIVED)","",V.Local.fQtyRecv)
+
+F.Intrinsic.Variable.AddRV("QtyRecv",V.Local.fQtyRecv)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Caller.Hook,!=,31951)
+		F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.GetPOReceiptHist.End
+
+Program.Sub.ProcessIssueReceipts.Start
+V.Local.iCnt.Declare
+V.Local.sFileName.Declare
+V.Local.sFilePath.Declare
+V.Local.sFileString.Declare
+V.Local.sLine.Declare
+V.Local.fCost.Declare
+V.Local.sSQL.Declare
+V.Local.sPart.Declare
+V.Local.sRev.Declare
+F.Intrinsic.Control.Try
+
+F.ODBC.Connection!con.OpenCompanyConnection
+F.Intrinsic.Control.For(V.Local.iCnt,0,V.DataTable.dtPOReceiptHist.RowCount--,1)
+	F.Intrinsic.Control.If(V.Global.bUseRev)
+		F.Intrinsic.String.Left(V.DataTable.dtPOReceiptHist(V.Local.iCnt).PART!FieldVal,17,V.Local.sPart)
+		F.Intrinsic.String.Right(V.DataTable.dtPOReceiptHist(V.Local.iCnt).PART!FieldVal,3,V.Local.sRev)
+	F.Intrinsic.Control.Else
+		V.Local.sPart.Set(V.DataTable.dtPOReceiptHist(V.Local.iCnt).PART!FieldVal)
+		V.Local.sRev.Set("")
+	F.Intrinsic.Control.EndIf
+	V.Local.sLine.Set("")
+	F.Intrinsic.Math.Add(V.Args.CPF,V.DataTable.dtPOReceiptHist(V.Local.iCnt).UNIT_COST!FieldVal,V.Local.fCost)
+	F.Intrinsic.Control.If(V.DataTable.dtPOReceiptHist(V.Local.iCnt).LOGGED!FieldValNot)
+		'Not logged yet, add it at the V.Local.fCost Value
+		F.Intrinsic.String.Build("{0},{1},{2},{3},{4},{5},{6},{7},{8},R,{9},{10},Y,,,,",V.Local.sPart,V.Local.sRev,V.DataTable.dtPOReceiptHist(V.Local.iCnt).LOCATION!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).QTY_RECEIVED!FieldVal,"CPF BALANCING",V.DataTable.dtPOReceiptHist(V.Local.iCnt).LOT!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).BIN!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).HEAT!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).SERIAL!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).GL_ACCOUNT!FieldVal,V.Local.fCost.String,V.Local.sLine)
+		F.Intrinsic.String.Build("{0}{1}{2},{3},{4},{5},{6},{7},{8},{9},{10},I,{11},{12},Y,,,,",V.Local.sLine,V.Ambient.NewLine,V.Local.sPart,V.Local.sRev,V.DataTable.dtPOReceiptHist(V.Local.iCnt).LOCATION!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).QTY_RECEIVED!FieldVal,"CPF BALANCING",V.DataTable.dtPOReceiptHist(V.Local.iCnt).LOT!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).BIN!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).HEAT!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).SERIAL!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).GL_ACCOUNT!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).UNIT_COST!FieldValString,V.Local.sLine)
+		
+		'Add current record to Log
+		F.Intrinsic.String.Build("insert into GCG_6178_LOG (PURCHASE_ORDER, PO_LINE, RECEIVER_NO, LOGGED, CPF) values ('{0}', '{1}', '{2}', 1, {3});",V.DataTable.dtPOReceiptHist(V.Local.iCnt).PURCHASE_ORDER!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).PO_LINE!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).RECEIVER_NO!FieldVal,V.Local.fCost,V.Local.sSQL)
+	F.Intrinsic.Control.ElseIf(V.Local.fCost,!=,V.DataTable.dtPOReceiptHist(V.Local.iCnt).CPF!FieldVal)
+		'Logged, but Cost changed, undo the OLD CPF and Do the NEW CPF
+		F.Intrinsic.String.Build("{0},{1},{2},{3},{4},{5},{6},{7},{8},R,{9},{10},Y,,,,",V.Local.sPart,V.Local.sRev,V.DataTable.dtPOReceiptHist(V.Local.iCnt).LOCATION!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).QTY_RECEIVED!FieldVal,"CPF BALANCING",V.DataTable.dtPOReceiptHist(V.Local.iCnt).LOT!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).BIN!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).HEAT!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).SERIAL!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).GL_ACCOUNT!FieldVal,V.Local.fCost.String,V.Local.sLine)
+		F.Intrinsic.String.Build("{0}{1}{2},{3},{4},{5},{6},{7},{8},{9},{10},I,{11},{12},Y,,,,",V.Local.sLine,V.Ambient.NewLine,V.Local.sPart,V.Local.sRev,V.DataTable.dtPOReceiptHist(V.Local.iCnt).LOCATION!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).QTY_RECEIVED!FieldVal,"CPF BALANCING",V.DataTable.dtPOReceiptHist(V.Local.iCnt).LOT!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).BIN!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).HEAT!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).SERIAL!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).GL_ACCOUNT!FieldVal,V.Local.fCost.String,V.Local.sLine)
+		
+		'Update LOG
+		F.Intrinsic.String.Build("update GCG_6178_LOG set CPF = {3} where PURCHASE_ORDER = '{0}' and PO_LINE = '{1}' and RECEIVER_NO = '{2}';",V.DataTable.dtPOReceiptHist(V.Local.iCnt).PURCHASE_ORDER!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).PO_LINE!FieldVal,V.DataTable.dtPOReceiptHist(V.Local.iCnt).RECEIVER_NO!FieldVal,V.Local.fCost,V.Local.sSQL)
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.If(V.Local.sLine,!=,"")
+		F.Intrinsic.Control.If(V.Local.sFileString,!=,"")
+			F.Intrinsic.String.Build("{0}{1}{2}",V.Local.sFileString,V.Ambient.NewLine,V.Local.sLine,V.Local.sFileString)
+		F.Intrinsic.Control.Else
+			V.Local.sFileString.Set(V.Local.sLine)
+		F.Intrinsic.Control.EndIf
+		F.ODBC.Connection!con.Execute(V.Local.sSQL)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iCnt)
+F.ODBC.Connection!con.Close
+
+F.Intrinsic.Control.If(V.Local.sFileString,!=,"")
+	'write file and process upload
+	V.Local.sFileName.Set("ISSREC.txt")
+	F.Intrinsic.String.Build("{0}\{1}",V.Caller.FilesDir,V.Local.sFileName,V.Local.sFilePath)
+	F.Intrinsic.File.String2File(V.Local.sFilePath,V.Local.sFileString)
+	Function.Intrinsic.Debug.Stop
+	F.Global.Callwrapper.New("IssueReceipt","Inventory.StandAloneIssueReceipts")
+	F.Global.Callwrapper.SetProperty("IssueReceipt","FileName",V.Local.sFileName)
+	F.Global.Callwrapper.Run("IssueReceipt")
+	F.Intrinsic.File.DeleteFile(V.Local.sFilePath)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Caller.Hook,!=,31951)
+		F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.ProcessIssueReceipts.End
+
+Program.Sub.Comments.Start
+${$5$}$3.0.0.0$}$1
+${$6$}$bbaker$}$20201123135209493$}$pM7xsHplA2E9VCTenDTJ47gi1rF/t66Wkl0sHZp9G8XTPOyKB0YFarr+biow/etBSJ9OnIjeLeY=
+Program.Sub.Comments.End
